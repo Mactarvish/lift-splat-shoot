@@ -118,7 +118,7 @@ def lidar_check(version,
 
 def cumsum_check(version,
                 dataroot='/data/nuscenes',
-                gpuid=1,
+                gpuid=0,
 
                 H=900, W=1600,
                 resize_lim=(0.193, 0.225),
@@ -194,7 +194,7 @@ def cumsum_check(version,
 def eval_model_iou(version,
                 modelf,
                 dataroot='/data/nuscenes',
-                gpuid=1,
+                gpuid=0,
 
                 H=900, W=1600,
                 resize_lim=(0.193, 0.225),
@@ -250,7 +250,7 @@ def viz_model_preds(version,
                     modelf,
                     dataroot='/data/nuscenes',
                     map_folder='/data/nuscenes/mini',
-                    gpuid=1,
+                    gpuid=0,
                     viz_train=False,
 
                     H=900, W=1600,
@@ -300,7 +300,7 @@ def viz_model_preds(version,
     model.to(device)
 
     dx, bx, _ = gen_dx_bx(grid_conf['xbound'], grid_conf['ybound'], grid_conf['zbound'])
-    dx, bx = dx[:2].numpy(), bx[:2].numpy()
+    dx, bx = dx[:2].numpy(), bx[:2].numpy() # 只考虑x和y的步长和起始位置
 
     scene2map = {}
     for rec in loader.dataset.nusc.scene:

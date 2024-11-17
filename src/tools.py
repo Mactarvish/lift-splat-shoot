@@ -136,8 +136,10 @@ def img_transform(img, post_rot, post_tran,
         post_rot = A.matmul(post_rot)
         post_tran = A.matmul(post_tran) + b
     A = get_rot(rotate/180*np.pi)
-    b = torch.Tensor([crop[2] - crop[0], crop[3] - crop[1]]) / 2
-    b = A.matmul(-b) + b
+    b = torch.Tensor([crop[2] - crop[0], crop[3] - crop[1]]) / 2 # W / 2, H / 2 也就是图像中心点
+    # 直接用A进行旋转的话，是以原点为中心旋转的，而我们要以图像中心旋转，实际的操作是围绕原点旋转+平移【绕原点旋转后的图像中心O到原图图像中心O'的向量】。
+    # A·(-b)是用A对向量-b进行旋转，得到的是围绕原点旋转后的图像中心指向原点的向量，再加上向量b就是【绕原点旋转后的图像中心O到原图图像中心O'的向量】。
+    b = A.matmul(-b) + b 
     post_rot = A.matmul(post_rot)
     post_tran = A.matmul(post_tran) + b
 
@@ -172,9 +174,9 @@ normalize_img = torchvision.transforms.Compose((
 
 
 def gen_dx_bx(xbound, ybound, zbound):
-    dx = torch.Tensor([row[2] for row in [xbound, ybound, zbound]])
-    bx = torch.Tensor([row[0] + row[2]/2.0 for row in [xbound, ybound, zbound]])
-    nx = torch.LongTensor([(row[1] - row[0]) / row[2] for row in [xbound, ybound, zbound]])
+    dx = torch.Tensor([row[2] for row in [xbound, ybound, zbound]]) # 步长
+    bx = torch.Tensor([row[0] + row[2]/2.0 for row in [xbound, ybound, zbound]]) # begin ?
+    nx = torch.LongTensor([(row[1] - row[0]) / row[2] for row in [xbound, ybound, zbound]]) # 步数
 
     return dx, bx, nx
 

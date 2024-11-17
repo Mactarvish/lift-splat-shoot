@@ -94,15 +94,15 @@ class NuscData(torch.utils.data.Dataset):
         return samples
     
     def sample_augmentation(self):
-        H, W = self.data_aug_conf['H'], self.data_aug_conf['W']
-        fH, fW = self.data_aug_conf['final_dim']
+        H, W = self.data_aug_conf['H'], self.data_aug_conf['W'] # 原图尺寸
+        fH, fW = self.data_aug_conf['final_dim'] # 最终尺寸
         if self.is_train:
             resize = np.random.uniform(*self.data_aug_conf['resize_lim'])
             resize_dims = (int(W*resize), int(H*resize))
-            newW, newH = resize_dims
+            newW, newH = resize_dims # 先resize到这个尺寸
             crop_h = int((1 - np.random.uniform(*self.data_aug_conf['bot_pct_lim']))*newH) - fH
             crop_w = int(np.random.uniform(0, max(0, newW - fW)))
-            crop = (crop_w, crop_h, crop_w + fW, crop_h + fH)
+            crop = (crop_w, crop_h, crop_w + fW, crop_h + fH) # x1 y1 x2 y2 # 然后从resize后的图中crop出fH fW
             flip = False
             if self.data_aug_conf['rand_flip'] and np.random.choice([0, 1]):
                 flip = True
@@ -120,9 +120,9 @@ class NuscData(torch.utils.data.Dataset):
 
     def get_image_data(self, rec, cams):
         imgs = []
-        rots = []
-        trans = []
-        intrins = []
+        rots = [] # 相机外参旋转矩阵
+        trans = [] # 相机外参平移向量
+        intrins = [] # 相机内参
         post_rots = []
         post_trans = []
         for cam in cams:
@@ -139,7 +139,7 @@ class NuscData(torch.utils.data.Dataset):
 
             # augmentation (resize, crop, horizontal flip, rotate)
             resize, resize_dims, crop, flip, rotate = self.sample_augmentation()
-            img, post_rot2, post_tran2 = img_transform(img, post_rot, post_tran,
+            img, post_rot2, post_tran2 = img_transform(img, post_rot, post_tran, # 增广引入的旋转和平移矩阵，都是2x2
                                                      resize=resize,
                                                      resize_dims=resize_dims,
                                                      crop=crop,
@@ -175,12 +175,12 @@ class NuscData(torch.utils.data.Dataset):
         rot = Quaternion(egopose['rotation']).inverse
         img = np.zeros((self.nx[0], self.nx[1]))
         for tok in rec['anns']:
-            inst = self.nusc.get('sample_annotation', tok)
+            inst = self.nusc.get('sample_annotation', tok) # 读取标注信息
             # add category for lyft
-            if not inst['category_name'].split('.')[0] == 'vehicle':
+            if not inst['category_name'].split('.')[0] == 'vehicle': # 只考虑车辆
                 continue
             box = Box(inst['translation'], inst['size'], Quaternion(inst['rotation']))
-            box.translate(trans)
+            box.translate(trans) # 将目标的坐标从全局坐标系转移到车体坐标系
             box.rotate(rot)
 
             pts = box.bottom_corners()[:2].T
@@ -232,7 +232,7 @@ class SegmentationData(NuscData):
 
         cams = self.choose_cams()
         imgs, rots, trans, intrins, post_rots, post_trans = self.get_image_data(rec, cams)
-        binimg = self.get_binimg(rec)
+        binimg = self.get_binimg(rec) # 制作二值图像作为分割GT
         
         return imgs, rots, trans, intrins, post_rots, post_trans, binimg
 

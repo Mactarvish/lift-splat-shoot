@@ -18,7 +18,7 @@ from .tools import SimpleLoss, get_batch_iou, get_val_info
 def train(version,
             dataroot='/data/nuscenes',
             nepochs=10000,
-            gpuid=1,
+            gpuid=0,
 
             H=900, W=1600,
             resize_lim=(0.193, 0.225),
@@ -78,7 +78,7 @@ def train(version,
     counter = 0
     for epoch in range(nepochs):
         np.random.seed()
-        for batchi, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(trainloader):
+        for batchi, (imgs, rots, trans, intrins, post_rots, post_trans, binimgs) in enumerate(trainloader): # 图像 相机外参旋转 相机外参平移 相机内参 增广旋转 增广平移 二值图GT
             t0 = time()
             opt.zero_grad()
             preds = model(imgs.to(device),

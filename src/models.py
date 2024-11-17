@@ -54,7 +54,7 @@ class CamEncode(nn.Module):
         x = self.depthnet(x)
 
         depth = self.get_depth_dist(x[:, :self.D])
-        new_x = depth.unsqueeze(1) * x[:, self.D:(self.D + self.C)].unsqueeze(2)
+        new_x = depth.unsqueeze(1) * x[:, self.D:(self.D + self.C)].unsqueeze(2) # Fig.3
 
         return depth, new_x
 
@@ -142,7 +142,7 @@ class LiftSplatShoot(nn.Module):
 
         self.downsample = 16
         self.camC = 64
-        self.frustum = self.create_frustum()
+        self.frustum = self.create_frustum() # 创建视锥
         self.D, _, _, _ = self.frustum.shape
         self.camencode = CamEncode(self.D, self.camC, self.downsample)
         self.bevencode = BevEncode(inC=self.camC, outC=outC)
@@ -154,10 +154,10 @@ class LiftSplatShoot(nn.Module):
         # make grid in image plane
         ogfH, ogfW = self.data_aug_conf['final_dim']
         fH, fW = ogfH // self.downsample, ogfW // self.downsample
-        ds = torch.arange(*self.grid_conf['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW)
+        ds = torch.arange(*self.grid_conf['dbound'], dtype=torch.float).view(-1, 1, 1).expand(-1, fH, fW) # 深度值离散化，4m 5m ... 44m，类似GFL
         D, _, _ = ds.shape
-        xs = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(1, 1, fW).expand(D, fH, fW)
-        ys = torch.linspace(0, ogfH - 1, fH, dtype=torch.float).view(1, fH, 1).expand(D, fH, fW)
+        xs = torch.linspace(0, ogfW - 1, fW, dtype=torch.float).view(1, 1, fW).expand(D, fH, fW) # 视锥宽度离散化
+        ys = torch.linspace(0, ogfH - 1, fH, dtype=torch.float).view(1, fH, 1).expand(D, fH, fW) # 视锥高度离散化
 
         # D x H x W x 3
         frustum = torch.stack((xs, ys, ds), -1)
@@ -175,10 +175,14 @@ class LiftSplatShoot(nn.Module):
         points = self.frustum - post_trans.view(B, N, 1, 1, 1, 3)
         points = torch.inverse(post_rots).view(B, N, 1, 1, 1, 3, 3).matmul(points.unsqueeze(-1))
 
-        # cam_to_ego
-        points = torch.cat((points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3],
+        # （2d）像素系转（3d）相机系
+        points = torch.cat((points[:, :, :, :, :, :2] * points[:, :, :, :, :, 2:3], # 去中心化针孔相机模型 x=u⋅d,y=v⋅d,z=d
                             points[:, :, :, :, :, 2:3]
                             ), 5)
+        # 相机系转自车系
+        # 内参的逆矩阵将像素平面上的点从像素坐标系转换为相机坐标系
+        # 内参 · 相机系坐标 = 像素系坐标
+        # 内参逆 · 像素系坐标 = 相机系坐标
         combine = rots.matmul(torch.inverse(intrins))
         points = combine.view(B, N, 1, 1, 1, 3, 3).matmul(points).squeeze(-1)
         points += trans.view(B, N, 1, 1, 1, 3)
@@ -197,7 +201,7 @@ class LiftSplatShoot(nn.Module):
 
         return x
 
-    def voxel_pooling(self, geom_feats, x):
+    def voxel_pooling(self, geom_feats, x): # 这个鸟函数应该就是PointPillar
         B, N, D, H, W, C = x.shape
         Nprime = B*N*D*H*W
 
@@ -205,45 +209,47 @@ class LiftSplatShoot(nn.Module):
         x = x.reshape(Nprime, C)
 
         # flatten indices
-        geom_feats = ((geom_feats - (self.bx - self.dx/2.)) / self.dx).long()
+        geom_feats = ((geom_feats - (self.bx - self.dx/2.)) / self.dx).long() # self.dx应该就是池化栅格尺寸 注意此时geom_feats是自车系坐标
         geom_feats = geom_feats.view(Nprime, 3)
         batch_ix = torch.cat([torch.full([Nprime//B, 1], ix,
-                             device=x.device, dtype=torch.long) for ix in range(B)])
+                             device=x.device, dtype=torch.long) for ix in range(B)]) # 为batch中每个样本确定batch索引
         geom_feats = torch.cat((geom_feats, batch_ix), 1)
 
-        # filter out points that are outside box
+        # filter out points that are outside box # 避免越界
         kept = (geom_feats[:, 0] >= 0) & (geom_feats[:, 0] < self.nx[0])\
             & (geom_feats[:, 1] >= 0) & (geom_feats[:, 1] < self.nx[1])\
             & (geom_feats[:, 2] >= 0) & (geom_feats[:, 2] < self.nx[2])
         x = x[kept]
         geom_feats = geom_feats[kept]
 
-        # get tensors from the same voxel next to each other
+        # get tensors from the same voxel next to each other 
+        # # geom_feats[:, 2]全零
+        # 这种方法使得不同batch或者不同nx的体素rank一定是不同的
         ranks = geom_feats[:, 0] * (self.nx[1] * self.nx[2] * B)\
             + geom_feats[:, 1] * (self.nx[2] * B)\
             + geom_feats[:, 2] * B\
             + geom_feats[:, 3]
-        sorts = ranks.argsort()
+        sorts = ranks.argsort() # 这个排序应该是为了后头这个累积池化服务的
         x, geom_feats, ranks = x[sorts], geom_feats[sorts], ranks[sorts]
 
         # cumsum trick
         if not self.use_quickcumsum:
-            x, geom_feats = cumsum_trick(x, geom_feats, ranks)
+            x, geom_feats = cumsum_trick(x, geom_feats, ranks) # 这里应该是对每个柱子里的数值求和
         else:
             x, geom_feats = QuickCumsum.apply(x, geom_feats, ranks)
 
         # griddify (B x C x Z x X x Y)
         final = torch.zeros((B, C, self.nx[2], self.nx[0], self.nx[1]), device=x.device)
-        final[geom_feats[:, 3], :, geom_feats[:, 2], geom_feats[:, 0], geom_feats[:, 1]] = x
+        final[geom_feats[:, 3], :, geom_feats[:, 2], geom_feats[:, 0], geom_feats[:, 1]] = x # 根据geom_feats把x填充回体素
 
         # collapse Z
-        final = torch.cat(final.unbind(dim=2), 1)
+        final = torch.cat(final.unbind(dim=2), 1) # 消除z轴（dim2是z轴，例子中就是1）
 
         return final
 
     def get_voxels(self, x, rots, trans, intrins, post_rots, post_trans):
-        geom = self.get_geometry(rots, trans, intrins, post_rots, post_trans)
-        x = self.get_cam_feats(x)
+        geom = self.get_geometry(rots, trans, intrins, post_rots, post_trans) # 调整视锥位姿
+        x = self.get_cam_feats(x) # 通过编码器把x调整为与视锥同形，仅通道数不同
 
         x = self.voxel_pooling(geom, x)
 
